@@ -1,0 +1,391 @@
+class ZCL_CDS_MAINT_DYNAMIC definition
+  public
+  create public .
+
+public section.
+
+  class-methods GENERATE_BY_TABLENAME
+    importing
+      !IV_TABLENAME type TABNAME16
+    returning
+      value(RS_CDS) type ZAUTO_CDS_CREATE
+    raising
+      ZCX_CDS_MAINT_DYNAMIC .
+  methods CONSTRUCTOR
+    importing
+      !IV_TABLENAME type TABNAME16 .
+protected section.
+private section.
+
+  data MV_DEVCLASS type DEVCLASS value '$TMP' ##NO_TEXT.
+  data MT_MSG type RS_T_MSG .
+  data M_CDS type ZAUTO_CDS_CREATE .
+
+  methods GENERATE_CDS_VIEW
+    raising
+      ZCX_CDS_MAINT_DYNAMIC .
+  methods GET_DDL_NAME
+    returning
+      value(RV_NAME) type DDLNAME .
+  methods GET_DDL_SOURCE
+    importing
+      !IV_CDS_NAME type STRING
+      !IV_DDL_NAME type DDLNAME
+      !IV_DDTEXT type DDTEXT
+      !IV_TABNAME type TABNAME16
+      !IT_FIELD type DFIES_TAB
+    returning
+      value(RV_SOURCE) type DDDDLSOURCE .
+  methods GET_FIELDS
+    returning
+      value(RT_DFIES) type DFIES_TAB .
+  methods GET_SQLVIEW_NAME
+    returning
+      value(RV_NAME) type STRING .
+  methods READ_PARAMETERS .
+  methods GET_TABLE_ELEMENTS
+    importing
+      !IT_FIELDS type DFIES_TAB
+    returning
+      value(RV_KEYS) type STRING .
+  class-methods GET_ERROR_TEXTID
+    importing
+      !IT_ERRORS type DDL2DDICERRORS
+    returning
+      value(RV_TEXTID) type SCX_T100KEY .
+ENDCLASS.
+
+
+
+CLASS ZCL_CDS_MAINT_DYNAMIC IMPLEMENTATION.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_CDS_MAINT_DYNAMIC->CONSTRUCTOR
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_TABLENAME                   TYPE        TABNAME16
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD constructor.
+
+    m_cds-tabname = iv_tablename.
+    read_parameters( ).
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_MAINT_DYNAMIC=>GENERATE_BY_TABLENAME
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_TABLENAME                   TYPE        TABNAME16
+* | [<-()] RS_CDS                         TYPE        ZAUTO_CDS_CREATE
+* | [!CX!] ZCX_CDS_MAINT_DYNAMIC
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD generate_by_tablename.
+
+    DATA(lr_instance) = NEW zcl_cds_maint_dynamic( iv_tablename ).
+
+    lr_instance->generate_cds_view( ).
+    MOVE lr_instance->m_cds TO rs_cds.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_MAINT_DYNAMIC->GENERATE_CDS_VIEW
+* +-------------------------------------------------------------------------------------------------+
+* | [!CX!] ZCX_CDS_MAINT_DYNAMIC
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD generate_cds_view.
+
+    DATA:
+      lo_ddl_handler TYPE REF TO cl_dd_ddl_handler,
+      ls_src         TYPE ddddlsrcv,
+      ls_msg         TYPE bal_s_msg,
+      lt_field       TYPE dfies_tab.
+
+*   Get fields
+    lt_field = me->get_fields( ).
+
+    lo_ddl_handler ?= cl_dd_ddl_handler_factory=>create( ).
+
+*   Generate name for DDL
+    ls_src-ddlname = me->get_ddl_name( ).
+    ls_src-ddlanguage = sy-langu.
+    ls_src-ddtext     = 'Generated CDS view for table &1'(001).
+    REPLACE ALL OCCURRENCES OF '&1' IN ls_src-ddtext WITH m_cds-tabname.
+
+*   Generate DDL content
+    ls_src-source = me->get_ddl_source(
+      iv_cds_name   = CONV string( ls_src-ddlname )
+      iv_ddl_name   = ls_src-ddlname
+      iv_ddtext     = ls_src-ddtext
+      iv_tabname    = me->m_cds-tabname
+      it_field      = lt_field
+    ).
+
+*   Try to save and actiate CSD view and DDL definition
+    TRY.
+        lo_ddl_handler->if_dd_ddl_handler~save(
+          name          = ls_src-ddlname
+          put_state     = if_dd_sobject_constants=>put_stati_ext
+          ddddlsrcv_wa  = ls_src ).
+
+        lo_ddl_handler->if_dd_ddl_handler~write_tadir(
+          objectname      = ls_src-ddlname
+          devclass        = mv_devclass
+          set_genflag     = abap_true
+          prid            = -1 ).
+
+      CATCH cx_dd_ddl_save INTO DATA(lx_save).
+        DATA(lv_textid) = get_error_textid( lx_save->get_errors( ) ).
+        RAISE EXCEPTION TYPE zcx_cds_maint_dynamic
+          EXPORTING
+            textid   = COND #(
+              WHEN lv_textid IS INITIAL THEN zcx_cds_maint_dynamic=>ddl_save_error ELSE lv_textid )
+            tabname  = m_cds-tabname
+            ddlname  = ls_src-ddlname
+            previous = lx_save.
+    ENDTRY.
+
+    TRY.
+        lo_ddl_handler->if_dd_ddl_handler~activate(
+          name          = ls_src-ddlname ).
+
+      CATCH cx_dd_ddl_activate INTO DATA(lx_activate).
+        lv_textid = get_error_textid( lx_activate->get_errors( ) ).
+        RAISE EXCEPTION TYPE zcx_cds_maint_dynamic
+          EXPORTING
+            textid   = COND #(
+              WHEN lv_textid IS INITIAL THEN zcx_cds_maint_dynamic=>ddl_activate_error ELSE lv_textid )
+            tabname  = m_cds-tabname
+            ddlname  = ls_src-ddlname
+            previous = lx_activate.
+    ENDTRY.
+
+*   Save generated ddl name in case of rollback
+    m_cds-ddlname = ls_src-ddlname.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_MAINT_DYNAMIC->GET_DDL_NAME
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RV_NAME                        TYPE        DDLNAME
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_ddl_name.
+
+    CONSTANTS:
+      co_prefix  TYPE c LENGTH 13  VALUE 'ZCDS_PGS_UDH_',
+      co_suffix  TYPE c LENGTH 4   VALUE '_CDS'.
+
+*    CONCATENATE co_prefix m_cds-tabname co_suffix INTO rv_name.
+    CONCATENATE co_prefix m_cds-tabname INTO rv_name.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_MAINT_DYNAMIC->GET_DDL_SOURCE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_CDS_NAME                    TYPE        STRING
+* | [--->] IV_DDL_NAME                    TYPE        DDLNAME
+* | [--->] IV_DDTEXT                      TYPE        DDTEXT
+* | [--->] IV_TABNAME                     TYPE        TABNAME16
+* | [--->] IT_FIELD                       TYPE        DFIES_TAB
+* | [<-()] RV_SOURCE                      TYPE        DDDDLSOURCE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_ddl_source.
+
+    DATA:
+          lv_lines                TYPE int4.
+
+    FIELD-SYMBOLS:
+          <ls_line>     TYPE dfies.
+
+    DATA(lv_sqlview) = me->get_sqlview_name( ).
+    DATA(lv_keys) = me->get_table_elements( it_field ).
+
+*-   Prepare DDL source text
+    CONCATENATE rv_source '@AccessControl.authorizationCheck: #NOT_REQUIRED' cl_abap_char_utilities=>cr_lf INTO rv_source ##NO_TEXT.
+    CONCATENATE rv_source '@Analytics.dataCategory: #FACT' cl_abap_char_utilities=>cr_lf INTO rv_source ##NO_TEXT.
+    CONCATENATE rv_source '@Analytics.dataExtraction.enabled: true' cl_abap_char_utilities=>cr_lf INTO rv_source ##NO_TEXT.
+    CONCATENATE rv_source '@EndUserText.label: ''' iv_ddtext(40) '''' cl_abap_char_utilities=>cr_lf INTO rv_source ##NO_TEXT.
+
+*-  start of mapping
+    CONCATENATE rv_source '@Analytics.dataExtraction.delta.changeDataCapture.mapping: [{' INTO rv_source ##NO_TEXT.
+*-  table
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+    CONCATENATE rv_source 'table: ''' iv_tabname '''' INTO rv_source.
+    CONCATENATE rv_source ',' INTO rv_source.
+*-  role
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+    CONCATENATE rv_source 'role: #MAIN' INTO rv_source.
+    CONCATENATE rv_source ',' INTO rv_source.
+*-  view element
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+    CONCATENATE rv_source 'viewElement: [' lv_keys ']' INTO rv_source SEPARATED BY space.
+    CONCATENATE rv_source ',' INTO rv_source.
+*-  table element
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+    CONCATENATE rv_source 'tableElement: [' lv_keys ']' INTO rv_source SEPARATED BY space.
+*-  end of mapping
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source '}]' cl_abap_char_utilities=>cr_lf INTO rv_source ##NO_TEXT.
+
+
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source 'define view entity' iv_cds_name INTO rv_source SEPARATED BY space.
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+    CONCATENATE rv_source 'as select from' iv_tabname INTO rv_source SEPARATED BY space.
+    CONCATENATE rv_source cl_abap_char_utilities=>cr_lf INTO rv_source.
+    CONCATENATE rv_source '{' cl_abap_char_utilities=>cr_lf INTO rv_source.
+
+*   Add all fields of table to be selected
+    DESCRIBE TABLE it_field LINES lv_lines.
+    LOOP AT it_field ASSIGNING <ls_line>.
+      CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+      IF <ls_line>-keyflag EQ abap_true.
+        CONCATENATE rv_source 'key' INTO rv_source SEPARATED BY space.
+      ENDIF.
+      IF sy-tabix <> lv_lines.
+        CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+        CONCATENATE rv_source iv_tabname '.' <ls_line>-fieldname ',' cl_abap_char_utilities=>cr_lf INTO rv_source.
+      ELSE.
+        CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+        CONCATENATE rv_source cl_abap_char_utilities=>horizontal_tab INTO rv_source.
+        CONCATENATE rv_source iv_tabname '.' <ls_line>-fieldname cl_abap_char_utilities=>cr_lf INTO rv_source.
+      ENDIF.
+    ENDLOOP.
+
+    CONCATENATE  rv_source '}' INTO rv_source.
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Private Method ZCL_CDS_MAINT_DYNAMIC=>GET_ERROR_TEXTID
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IT_ERRORS                      TYPE        DDL2DDICERRORS
+* | [<-()] RV_TEXTID                      TYPE        SCX_T100KEY
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_error_textid.
+
+    READ TABLE it_errors INTO DATA(ls_error) INDEX 1.
+    CHECK sy-subrc EQ 0.
+
+    rv_textid-msgid = ls_error-arbgb.
+    rv_textid-msgno = ls_error-msgnr.
+    rv_textid-attr1 = ls_error-var1.
+    rv_textid-attr2 = ls_error-var2.
+    rv_textid-attr3 = ls_error-var3.
+    rv_textid-attr4 = ls_error-var4.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_MAINT_DYNAMIC->GET_FIELDS
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RT_DFIES                       TYPE        DFIES_TAB
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_fields.
+
+    CALL FUNCTION 'DDIF_NAMETAB_GET'
+      EXPORTING
+        tabname   = CONV ddobjname( m_cds-tabname )
+      TABLES
+        dfies_tab = rt_dfies
+      EXCEPTIONS
+        not_found = 1
+        OTHERS    = 2.
+    IF sy-subrc <> 0.
+* Implement suitable error handling here
+    ENDIF.
+
+*- delete client field
+    DELETE rt_dfies WHERE fieldname = 'MANDT' OR fieldname = 'CLIENT'.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_MAINT_DYNAMIC->GET_SQLVIEW_NAME
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RV_NAME                        TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_sqlview_name.
+
+    CONSTANTS:
+      co_vprefix TYPE c LENGTH 6  VALUE 'ZDDLV_'.
+
+    CONCATENATE co_vprefix m_cds-tabname INTO rv_name.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_MAINT_DYNAMIC->GET_TABLE_ELEMENTS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IT_FIELDS                      TYPE        DFIES_TAB
+* | [<-()] RV_KEYS                        TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_table_elements.
+
+    rv_keys = ''.
+
+    LOOP AT it_fields ASSIGNING FIELD-SYMBOL(<ls_line>) WHERE keyflag EQ abap_true.
+      IF strlen( rv_keys ) GT 0.
+        CONCATENATE rv_keys ',' INTO rv_keys SEPARATED BY space.
+      ENDIF.
+      CONCATENATE rv_keys '''' <ls_line>-fieldname '''' INTO rv_keys.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_MAINT_DYNAMIC->READ_PARAMETERS
+* +-------------------------------------------------------------------------------------------------+
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD read_parameters.
+
+    m_cds-ddlname = get_ddl_name( ).
+
+*-  check if active object exists or not
+    m_cds-objstate = cl_dd_ddl_handler_factory=>create_internal( )->get_version( ddlname = m_cds-ddlname ).
+
+*-  check if ddl source exists
+    TRY.
+        cl_dd_ddl_handler_factory=>create( )->get_ddl_content_object_names(
+          EXPORTING
+            ddlname = m_cds-ddlname
+          IMPORTING
+            viewname = m_cds-viewname
+            entityname = m_cds-entityname
+        ).
+      CATCH cx_dd_ddl_read.
+    ENDTRY.
+    m_cds-exists = COND abap_bool(
+        WHEN m_cds-viewname IS NOT INITIAL OR m_cds-entityname IS NOT INITIAL THEN abap_true
+        ELSE abap_false
+    ).
+
+*-  check if ddl can be created in this client
+    TRY.
+        m_cds-client_writable = COND abap_bool(
+          WHEN cl_t000_client_api_factory=>get_t000_api_instance( )->get_t000_values( sy-mandt )-cccoractiv EQ 1
+            THEN abap_true
+          ELSE abap_false
+        ).
+      CATCH cx_t000_error.
+    ENDTRY.
+
+  ENDMETHOD.
+ENDCLASS.
