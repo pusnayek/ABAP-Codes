@@ -1,0 +1,545 @@
+class ZCL_CDS_WHEREUSED_SEARCH definition
+  public
+  create public .
+
+public section.
+
+  types:
+    BEGIN OF ty_view,
+        cdsview        TYPE ris_parameter,
+        isasso         TYPE abap_bool,
+        base_numfields TYPE i,
+        numfields      TYPE i,
+        dex            TYPE abap_bool,
+        maintab        TYPE string,
+        vdmcat         TYPE string,
+        base_rcount    TYPE int8,
+        cds_rcount     TYPE int8,
+      END OF ty_view .
+  types:
+    tt_view TYPE TABLE OF ty_view .
+  types:
+    range_cdsviews TYPE RANGE OF ris_parameter .
+
+  class-methods FIND_LIST_WHERE_USED
+    importing
+      !IV_OBJECT type RIS_PARAMETER
+      !IS_SOURCE_A_TABLE type ABAP_BOOL
+      !IV_DISCARD_CUSTOM type ABAP_BOOL
+    exporting
+      value(ET_REPOSITORY) type IF_WB_DDLS_RIS_DATA_PROVIDER=>TY_T_DF_REPOSITORY .
+  class-methods GET_CDS_DETAILS
+    importing
+      !IV_ENTITY_NAME type STRING
+      !IV_BASEENTITY_NAME type STRING optional
+    exporting
+      !EV_USEDAS_ASSOCIATION type ABAP_BOOL
+      !EV_NUMFIELDS type I
+      !EV_EXTRACTION_ENABLED type ABAP_BOOL
+      !EV_MAIN_EXTRACT_TAB type STRING
+      !EV_VDM_CAT type STRING
+      !ET_ASSOCIATIONS type DD08BVTAB
+    raising
+      CX_ADT_DATAPREVIEW_COMMON
+      CX_ADT_REST .
+  methods FIND_EXTRACTION_CDSVIEWS
+    importing
+      !IV_OBJECT type RIS_PARAMETER
+      !IS_SOURCE_A_TABLE type ABAP_BOOL
+      !MAX_NUM_OF_FIELDS_ONLY type ABAP_BOOL
+      !IV_DISCARD_CUSTOM type ABAP_BOOL default ABAP_TRUE
+    exporting
+      !ET_REPOSITORY type TT_VIEW
+    raising
+      CX_ADT_DATAPREVIEW_COMMON
+      CX_ADT_REST .
+  class-methods FIND_EXTRACTORS
+    importing
+      !IV_OBJECT type RIS_PARAMETER
+      !IS_SOURCE_A_TABLE type ABAP_BOOL
+      !MAX_NUM_OF_FIELDS_ONLY type ABAP_BOOL
+      !IV_DISCARD_CUSTOM type ABAP_BOOL default ABAP_TRUE
+    exporting
+      !ET_REPOSITORY type TT_VIEW
+    raising
+      CX_ADT_DATAPREVIEW_COMMON
+      CX_ADT_REST .
+  class-methods GET_FIELDS
+    importing
+      !IV_OBJNAME type DDOBJNAME
+    exporting
+      !EV_DDGOTSTATE type DDGOTSTATE
+      !ET_DD27PTAB type DD27PTAB
+      !EV_DD25V type DD25V
+      !EV_DD09V type DD09V .
+  class-methods CONFIRM_BASE
+    importing
+      !IV_BASEVIEW type DDLNAME
+      !IV_PROJECTVIEW type DDLNAME
+    returning
+      value(RV_CONFIRMED) type ABAP_BOOL .
+  class-methods READ_SELECT
+    importing
+      !IV_VIEW type DDLNAME
+    returning
+      value(RT_FIELDS) type IF_DD_DDL_UTILITIES=>TY_T_BASE_FIELDS
+    raising
+      CX_DD_DDL_CHECK .
+  class-methods GET_RECORDCOUNT
+    importing
+      !IV_ENTITY_NAME type STRING
+    returning
+      value(RV_COUNT) type INT8 .
+protected section.
+private section.
+
+  data GT_VIEWS type TT_VIEW .
+  data GT_EXTRACTORS type TT_VIEW .
+  data GV_NUMFIELDS type I .
+  data GT_ASSO_CDSVIEWS type RANGE_CDSVIEWS .
+
+  methods UPDATE_STATISTICS
+    importing
+      !MAX_NUM_OF_FIELDS_ONLY type ABAP_BOOL .
+  methods COLLECT_VIEWS
+    importing
+      !IV_OBJECT type RIS_PARAMETER
+      !IS_SOURCE_A_TABLE type ABAP_BOOL default ''
+      !IV_DISCARD_CUSTOM type ABAP_BOOL
+    exporting
+      !ET_EXTRACTORS type TT_VIEW
+      !ET_VIEWS type TT_VIEW
+    raising
+      CX_ADT_DATAPREVIEW_COMMON
+      CX_ADT_REST .
+ENDCLASS.
+
+
+
+CLASS ZCL_CDS_WHEREUSED_SEARCH IMPLEMENTATION.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_WHEREUSED_SEARCH->COLLECT_VIEWS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_OBJECT                      TYPE        RIS_PARAMETER
+* | [--->] IS_SOURCE_A_TABLE              TYPE        ABAP_BOOL (default ='')
+* | [--->] IV_DISCARD_CUSTOM              TYPE        ABAP_BOOL
+* | [<---] ET_EXTRACTORS                  TYPE        TT_VIEW
+* | [<---] ET_VIEWS                       TYPE        TT_VIEW
+* | [!CX!] CX_ADT_DATAPREVIEW_COMMON
+* | [!CX!] CX_ADT_REST
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD collect_views.
+
+    DATA:
+      lv_isasso           TYPE abap_bool,
+      lv_numfields        TYPE i,
+      lv_dex              TYPE abap_bool,
+      lv_main_extract_tab TYPE string,
+      lv_vdm_cat          TYPE string.
+
+    find_list_where_used(
+      EXPORTING
+        iv_object         = iv_object
+        iv_discard_custom = iv_discard_custom
+        is_source_a_table = is_source_a_table
+      IMPORTING
+        et_repository     = DATA(lt_repository) ).
+
+    LOOP AT lt_repository ASSIGNING FIELD-SYMBOL(<lfs_repo>).
+      CLEAR: lv_isasso, lv_numfields, lv_dex, lv_main_extract_tab, lv_vdm_cat.
+      CHECK confirm_base(
+        EXPORTING
+          iv_baseview = CONV ddlname( iv_object )
+          iv_projectview = <lfs_repo>-ddlsrc_name ) EQ abap_true.
+
+      get_cds_details(
+        EXPORTING
+          iv_entity_name        = CONV string( <lfs_repo>-ddlsrc_name )
+          iv_baseentity_name    = CONV string( iv_object )
+        IMPORTING
+          ev_usedas_association = lv_isasso
+          ev_numfields          = lv_numfields
+          ev_main_extract_tab   = lv_main_extract_tab
+          ev_vdm_cat            = lv_vdm_cat
+          ev_extraction_enabled = lv_dex ).
+*      CHECK lv_isasso EQ abap_false.
+      APPEND INITIAL LINE TO et_views ASSIGNING FIELD-SYMBOL(<lfs_view>).
+      <lfs_view>-cdsview = <lfs_repo>-ddlsrc_name.
+      <lfs_view>-isasso = lv_isasso.
+      <lfs_view>-numfields = lv_numfields.
+      <lfs_view>-maintab = lv_main_extract_tab.
+      <lfs_view>-vdmcat = lv_vdm_cat.
+      <lfs_view>-dex = lv_dex.
+    ENDLOOP.
+
+    DELETE et_views WHERE numfields EQ 0.
+    APPEND LINES OF et_views TO et_extractors.
+    DELETE et_extractors WHERE dex EQ abap_false.
+    DELETE et_views WHERE dex EQ abap_true.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_WHEREUSED_SEARCH=>CONFIRM_BASE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_BASEVIEW                    TYPE        DDLNAME
+* | [--->] IV_PROJECTVIEW                 TYPE        DDLNAME
+* | [<-()] RV_CONFIRMED                   TYPE        ABAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD confirm_base.
+
+    TYPES: BEGIN OF ty_baseinfo,
+             from TYPE STANDARD TABLE OF string WITH EMPTY KEY,
+           END OF ty_baseinfo.
+
+    TYPES: BEGIN OF ty_root,
+             baseinfo TYPE ty_baseinfo,
+           END OF ty_root.
+
+    DATA: lv_json TYPE string,
+          ls_data TYPE ty_root.
+
+    TRY.
+        cl_dd_ddl_handler_factory=>create( )->read(
+          EXPORTING
+            name = iv_projectview
+          IMPORTING
+            baseinfo_string = DATA(lt_data) ).
+
+        READ TABLE lt_data INTO DATA(ls_cdsdata) WITH KEY as4local = 'A'.
+        CHECK sy-subrc EQ 0.
+        lv_json = ls_cdsdata-baseinfo_string.
+
+        CALL METHOD /ui2/cl_json=>deserialize
+          EXPORTING
+            json = lv_json
+          CHANGING
+            data = ls_data.
+
+        rv_confirmed = abap_false.
+        LOOP AT ls_data-baseinfo-from ASSIGNING FIELD-SYMBOL(<lfs_base>).
+          IF iv_baseview EQ <lfs_base>.
+            rv_confirmed = abap_true.
+          ENDIF.
+        ENDLOOP.
+
+      CATCH cx_root INTO DATA(lx_error).
+        rv_confirmed = abap_false.
+    ENDTRY.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_CDS_WHEREUSED_SEARCH->FIND_EXTRACTION_CDSVIEWS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_OBJECT                      TYPE        RIS_PARAMETER
+* | [--->] IS_SOURCE_A_TABLE              TYPE        ABAP_BOOL
+* | [--->] MAX_NUM_OF_FIELDS_ONLY         TYPE        ABAP_BOOL
+* | [--->] IV_DISCARD_CUSTOM              TYPE        ABAP_BOOL (default =ABAP_TRUE)
+* | [<---] ET_REPOSITORY                  TYPE        TT_VIEW
+* | [!CX!] CX_ADT_DATAPREVIEW_COMMON
+* | [!CX!] CX_ADT_REST
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD find_extraction_cdsviews.
+
+    DATA:
+      lv_hasmoreviews   TYPE abap_bool VALUE abap_true,
+      lv_object         TYPE ris_parameter,
+      ls_source_a_table TYPE abap_bool,
+      lt_extractors     TYPE tt_view,
+      lt_views          TYPE tt_view,
+      rt_views_analyzed TYPE RANGE OF ris_parameter.
+
+    lv_object = iv_object.
+    ls_source_a_table = is_source_a_table.
+
+    WHILE lv_hasmoreviews EQ abap_true.
+      REFRESH: lt_extractors, lt_views.
+      collect_views(
+        EXPORTING
+          iv_object         = lv_object
+          iv_discard_custom = iv_discard_custom
+          is_source_a_table = ls_source_a_table
+        IMPORTING
+          et_extractors     = lt_extractors
+          et_views          = lt_views ).
+
+*      BREAK-POINT.
+
+      IF max_num_of_fields_only EQ abap_true.
+        DELETE lt_extractors WHERE numfields LT gv_numfields.
+        DELETE lt_views WHERE numfields LT gv_numfields.
+      ENDIF.
+
+      APPEND LINES OF lt_extractors TO gt_extractors.
+      APPEND LINES OF lt_views TO gt_views.
+      update_statistics( max_num_of_fields_only ).
+
+*-    remove to prevent next call with same view
+      APPEND VALUE #(
+        sign   = 'I'
+        option = 'EQ'
+        low    = lv_object ) TO rt_views_analyzed.
+      DELETE gt_views WHERE cdsview IN rt_views_analyzed.
+
+      IF lines( gt_views ) GT 0.
+        SORT gt_views BY numfields DESCENDING.
+        lv_object = gt_views[ 1 ]-cdsview.
+        ls_source_a_table = abap_false.
+        DELETE gt_views INDEX 1.
+      ELSE.
+        lv_hasmoreviews = abap_false.
+      ENDIF.
+    ENDWHILE.
+
+*-  return
+    et_repository = gt_extractors.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_WHEREUSED_SEARCH=>FIND_EXTRACTORS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_OBJECT                      TYPE        RIS_PARAMETER
+* | [--->] IS_SOURCE_A_TABLE              TYPE        ABAP_BOOL
+* | [--->] MAX_NUM_OF_FIELDS_ONLY         TYPE        ABAP_BOOL
+* | [--->] IV_DISCARD_CUSTOM              TYPE        ABAP_BOOL (default =ABAP_TRUE)
+* | [<---] ET_REPOSITORY                  TYPE        TT_VIEW
+* | [!CX!] CX_ADT_DATAPREVIEW_COMMON
+* | [!CX!] CX_ADT_REST
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD find_extractors.
+
+    NEW zcl_cds_whereused_search( )->find_extraction_cdsviews(
+      EXPORTING
+        iv_object         = iv_object
+        iv_discard_custom = iv_discard_custom
+        is_source_a_table = is_source_a_table
+        max_num_of_fields_only = max_num_of_fields_only
+      IMPORTING
+        et_repository     = et_repository ).
+
+    DATA(lv_base_record_count) = get_recordcount( CONV string( iv_object ) ).
+    LOOP AT et_repository ASSIGNING FIELD-SYMBOL(<lfs_repo>).
+      <lfs_repo>-base_rcount = lv_base_record_count.
+      <lfs_repo>-cds_rcount  = get_recordcount( CONV string( <lfs_repo>-cdsview ) ).
+
+      DATA(lt_fields) = zcl_cds_whereused_search=>read_select(
+        EXPORTING
+          iv_view = CONV ddlname( <lfs_repo>-cdsview ) ).
+      DELETE lt_fields WHERE base_object NE iv_object.
+      <lfs_repo>-base_numfields = lines( lt_fields ).
+      REFRESH: lt_fields.
+    ENDLOOP.
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_WHEREUSED_SEARCH=>FIND_LIST_WHERE_USED
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_OBJECT                      TYPE        RIS_PARAMETER
+* | [--->] IS_SOURCE_A_TABLE              TYPE        ABAP_BOOL
+* | [--->] IV_DISCARD_CUSTOM              TYPE        ABAP_BOOL
+* | [<---] ET_REPOSITORY                  TYPE        IF_WB_DDLS_RIS_DATA_PROVIDER=>TY_T_DF_REPOSITORY
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD find_list_where_used.
+
+    DATA where_used_parameter TYPE ris_s_parameter_where_used_s.
+
+    APPEND VALUE ris_s_parameter( object = iv_object ) TO where_used_parameter-find_objects.
+    IF is_source_a_table EQ abap_true.
+      where_used_parameter-find_type-trobjtype = 'TABL'.
+      where_used_parameter-find_type-legacy_type = 'DT'.
+    ELSE.
+      where_used_parameter-find_type-trobjtype = 'VIEW'.
+      where_used_parameter-find_type-legacy_type = 'DF'.
+    ENDIF.
+    where_used_parameter-scope_type-legacy_type = 'DF'.
+
+    DATA(ris_data_provider) = cl_ddls_ris_factory=>create_ris_data_provider( ).
+    ris_data_provider->get_where_used( EXPORTING i_where_used_parameter = where_used_parameter
+                                       CHANGING  c_results              = et_repository ).
+    IF iv_discard_custom EQ abap_true.
+      DELETE et_repository WHERE NOT ( ddlsrc_name CP 'I_*' OR ddlsrc_name CP 'P_*' OR ddlsrc_name CP 'C_*' ).
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_WHEREUSED_SEARCH=>GET_CDS_DETAILS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_ENTITY_NAME                 TYPE        STRING
+* | [--->] IV_BASEENTITY_NAME             TYPE        STRING(optional)
+* | [<---] EV_USEDAS_ASSOCIATION          TYPE        ABAP_BOOL
+* | [<---] EV_NUMFIELDS                   TYPE        I
+* | [<---] EV_EXTRACTION_ENABLED          TYPE        ABAP_BOOL
+* | [<---] EV_MAIN_EXTRACT_TAB            TYPE        STRING
+* | [<---] EV_VDM_CAT                     TYPE        STRING
+* | [<---] ET_ASSOCIATIONS                TYPE        DD08BVTAB
+* | [!CX!] CX_ADT_DATAPREVIEW_COMMON
+* | [!CX!] CX_ADT_REST
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_cds_details.
+
+    DATA  lo_dd_object                   TYPE REF TO if_dd_sobject.
+    DATA  lv_entity_name                 TYPE ddstrucobjname.
+    DATA  lv_cds_entity_name             TYPE dfies-tabname.
+    DATA  lt_sobjnames                   TYPE if_dd_sobject_types=>ty_t_sobjnames.
+    DATA  ls_cds_view_parameter          TYPE if_data_preview=>ty_parameter.
+    DATA  lv_param_len                   TYPE i.
+    DATA  lv_param_dec                   TYPE i.
+    DATA  lo_ddl_handler                 TYPE REF TO cl_dd_ddl_handler.
+
+    lv_entity_name = to_upper( iv_entity_name ).
+    APPEND lv_entity_name TO lt_sobjnames.
+    lo_dd_object = cl_dd_sobject_factory=>create( ).
+
+    TRY.
+        lo_dd_object->read(
+          EXPORTING
+            sobjnames         =   lt_sobjnames
+          IMPORTING
+            dd02bv_tab        =   DATA(lt_headers)
+            dd03ndv_tab       =   DATA(lt_fields)
+            dd08bv_tab        =   et_associations
+            dd10bv_tab        =   DATA(lt_parameters)
+        ).
+
+        READ TABLE et_associations WITH KEY strucobjn_t = iv_baseentity_name TRANSPORTING NO FIELDS.
+        IF sy-subrc EQ 0.
+          ev_usedas_association = abap_true.
+        ENDIF.
+        ev_numfields = lines( lt_fields ).
+
+      CATCH cx_dd_sobject_get INTO DATA(lx_dd_sobject_get).
+        RAISE EXCEPTION TYPE cx_adt_datapreview_common
+          EXPORTING
+            previous = lx_dd_sobject_get.
+    ENDTRY.
+
+    cl_dd_ddl_annotation_service=>get_annos(
+      EXPORTING
+        entityname = lv_entity_name
+      IMPORTING
+        entity_annos = DATA(lt_annos)
+    ).
+
+    ev_extraction_enabled = abap_false.
+    READ TABLE lt_annos INTO DATA(ls_annos) WITH KEY annoname = 'ANALYTICS.DATAEXTRACTION.ENABLED'.
+    IF sy-subrc EQ 0.
+      ev_extraction_enabled = COND #( WHEN ls_annos-value EQ 'true' THEN abap_true ELSE abap_false ).
+    ENDIF.
+
+    READ TABLE lt_annos INTO ls_annos WITH KEY annoname = 'ANALYTICS.DATAEXTRACTION.DELTA.CHANGEDATACAPTURE.MAPPING$1$.TABLE'.
+    IF sy-subrc EQ 0.
+      ev_main_extract_tab = ls_annos-value.
+    ENDIF.
+
+    READ TABLE lt_annos INTO ls_annos WITH KEY annoname = 'ANALYTICS.DATACATEGORY'.
+    IF sy-subrc EQ 0.
+      ev_vdm_cat = ls_annos-value.
+    ENDIF.
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_WHEREUSED_SEARCH=>GET_FIELDS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_OBJNAME                     TYPE        DDOBJNAME
+* | [<---] EV_DDGOTSTATE                  TYPE        DDGOTSTATE
+* | [<---] ET_DD27PTAB                    TYPE        DD27PTAB
+* | [<---] EV_DD25V                       TYPE        DD25V
+* | [<---] EV_DD09V                       TYPE        DD09V
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_fields.
+
+    CALL FUNCTION 'DDIF_VIEW_GET'
+      EXPORTING
+        name      = iv_objname
+        state     = 'M'
+        langu     = sy-langu
+      IMPORTING
+        gotstate  = ev_ddgotstate
+        dd09l_wa  = ev_dd09v
+        dd25v_wa  = ev_dd25v
+      TABLES
+*       dd26v_tab = tc1_tab
+        dd27p_tab = et_dd27ptab
+*       dd28j_tab = tc2_tab
+*       dd28v_tab = tc3_tab
+*       dd35v_tab = ddsh_tab-dd35v
+*       dd36m_tab = ddsh_tab-dd36m
+      EXCEPTIONS
+        OTHERS    = 1.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_WHEREUSED_SEARCH=>GET_RECORDCOUNT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_ENTITY_NAME                 TYPE        STRING
+* | [<-()] RV_COUNT                       TYPE        INT8
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_recordcount.
+
+*    SELECT COUNT( 1 ) FROM (iv_entity_name) INTO @rv_count .
+    rv_count = 0.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_CDS_WHEREUSED_SEARCH=>READ_SELECT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_VIEW                        TYPE        DDLNAME
+* | [<-()] RT_FIELDS                      TYPE        IF_DD_DDL_UTILITIES=>TY_T_BASE_FIELDS
+* | [!CX!] CX_DD_DDL_CHECK
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD read_select.
+
+    rt_fields = cl_dd_ddl_utilities=>if_dd_ddl_utilities~get_cds_base_fields( iv_view ).
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_CDS_WHEREUSED_SEARCH->UPDATE_STATISTICS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] MAX_NUM_OF_FIELDS_ONLY         TYPE        ABAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD update_statistics.
+
+    SORT: gt_extractors BY cdsview,
+          gt_views BY cdsview.
+    DELETE ADJACENT DUPLICATES FROM: gt_extractors COMPARING cdsview,
+                                     gt_views COMPARING cdsview.
+
+    IF gt_asso_cdsviews IS NOT INITIAL.
+      DELETE gt_views WHERE cdsview IN gt_asso_cdsviews.
+      DELETE gt_extractors WHERE cdsview IN gt_asso_cdsviews.
+    ENDIF.
+
+    SORT gt_extractors BY numfields DESCENDING.
+    READ TABLE gt_extractors ASSIGNING FIELD-SYMBOL(<lfs_extractor>) INDEX 1.
+    CHECK sy-subrc EQ 0.
+
+    CHECK <lfs_extractor>-numfields GT 0.
+    gv_numfields = <lfs_extractor>-numfields.
+
+    IF max_num_of_fields_only = abap_true.
+      DELETE gt_views WHERE numfields LT <lfs_extractor>-numfields.
+    ENDIF.
+
+  ENDMETHOD.
+ENDCLASS.

@@ -1,0 +1,69 @@
+*&---------------------------------------------------------------------*
+*& Report ZIERP_EXTRACT_CDSINFO
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zierp_extract_cdsinfo.
+
+DATA: p_table TYPE tabname.
+SELECT-OPTIONS: s_tab FOR p_table NO INTERVALS.
+PARAMETERS: p_where AS CHECKBOX,
+            p_assoc AS CHECKBOX DEFAULT 'X'.
+DATA:
+  lt_meta      TYPE TABLE OF zierp_cdsextract,
+  lt_assoc     TYPE TABLE OF zierp_cdsassocat,
+  lt_dd08bvtab TYPE dd08bvtab.
+
+START-OF-SELECTION.
+
+  LOOP AT s_tab INTO DATA(ls_tab).
+
+    TRY.
+        IF p_where EQ abap_true.
+          zcl_cds_whereused_search=>find_extractors(
+            EXPORTING
+              iv_object              = CONV ris_parameter( ls_tab-low )
+              is_source_a_table      = abap_true
+              max_num_of_fields_only = abap_false
+              iv_discard_custom      = abap_true
+            IMPORTING
+              et_repository          = DATA(lt_repo) ).
+
+          LOOP AT lt_repo ASSIGNING FIELD-SYMBOL(<lfs_repo>).
+            APPEND INITIAL LINE TO lt_meta ASSIGNING FIELD-SYMBOL(<lfs_meta>).
+            MOVE-CORRESPONDING <lfs_repo> TO <lfs_meta>.
+            <lfs_meta>-baseview = ls_tab-low.
+          ENDLOOP.
+
+          DELETE FROM zierp_cdsextract WHERE baseview = ls_tab-low.
+          INSERT zierp_cdsextract FROM TABLE lt_meta.
+          COMMIT WORK.
+          REFRESH: lt_meta, lt_repo.
+
+        ENDIF.
+
+*-      extract associations
+        IF p_assoc EQ abap_true.
+          zcl_cds_whereused_search=>get_cds_details(
+            EXPORTING
+              iv_entity_name        = CONV string( ls_tab-low )
+            IMPORTING
+              et_associations       = lt_dd08bvtab ).
+
+          DELETE lt_dd08bvtab WHERE strucobjn_s <> ls_tab-low.
+          LOOP AT lt_dd08bvtab ASSIGNING FIELD-SYMBOL(<lfs_assoc>).
+            APPEND INITIAL LINE TO lt_assoc ASSIGNING FIELD-SYMBOL(<lfs_a>).
+            MOVE-CORRESPONDING <lfs_assoc> TO <lfs_a>.
+          ENDLOOP.
+
+          DELETE FROM zierp_cdsassocat WHERE strucobjn = ls_tab-low.
+          INSERT zierp_cdsassocat FROM TABLE lt_assoc.
+          COMMIT WORK.
+          REFRESH: lt_dd08bvtab, lt_assoc.
+        ENDIF.
+
+      CATCH cx_adt_datapreview_common.
+      CATCH cx_adt_rest.
+    ENDTRY.
+  ENDLOOP.
+  WRITE: / 'Done'.
